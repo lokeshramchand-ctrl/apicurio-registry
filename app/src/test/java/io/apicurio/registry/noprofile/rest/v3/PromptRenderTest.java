@@ -164,6 +164,37 @@ public class PromptRenderTest extends AbstractResourceTestBase {
     }
 
     @Test
+    public void testRenderUsesDeclaredDefaultWhenVariableOmitted() throws Exception {
+        String group = "default-value-" + UUID.randomUUID().toString();
+        String artifactId = "greeting-prompt";
+
+        String variablesSchema = """
+            {
+              "greeting": { "type": "string", "default": "Hello there", "required": false }
+            }
+            """;
+
+        String content = createPromptWithSchema("Greeting: {{greeting}}", variablesSchema);
+
+        createArtifact(group, artifactId, PROMPT_TEMPLATE, content, ContentTypes.APPLICATION_JSON);
+
+        // 'greeting' is omitted entirely; the declared default should be substituted.
+        Map<String, Object> request = Map.of("variables", Map.of());
+
+        given().when()
+                .contentType(CT_JSON)
+                .pathParam("groupId", group)
+                .pathParam("artifactId", artifactId)
+                .pathParam("versionExpression", "branch=latest")
+                .body(request)
+                .post("/registry/v3/groups/{groupId}/artifacts/{artifactId}/versions/{versionExpression}/render")
+                .then()
+                .statusCode(200)
+                .body("rendered", equalTo("Greeting: Hello there"))
+                .body("validationErrors", hasSize(0));
+    }
+
+    @Test
     public void testRenderYamlTemplate() throws Exception {
         String group = "yaml-render-" + UUID.randomUUID().toString();
         String artifactId = "yaml-prompt";

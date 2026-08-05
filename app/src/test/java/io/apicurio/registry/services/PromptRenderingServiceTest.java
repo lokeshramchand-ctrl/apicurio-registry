@@ -404,6 +404,144 @@ public class PromptRenderingServiceTest {
         Assertions.assertTrue(errors.get(0).getMessage().contains("greater than maximum"));
     }
 
+    // ===== Default Value Tests =====
+
+    @Test
+    public void testDefaultValueAppliedWhenVariableOmitted() {
+        String yamlContent = """
+            templateId: default-test
+            template: "Greeting: {{greeting}}"
+            variables:
+              greeting:
+                type: string
+                default: Hello there
+            """;
+
+        ContentHandle content = ContentHandle.create(yamlContent);
+        Map<String, Object> variables = new HashMap<>(); // 'greeting' omitted entirely
+
+        RenderPromptResponse response = renderingService.render(content, variables,
+                "default", "default-test", "1.0");
+
+        Assertions.assertEquals("Greeting: Hello there", response.getRendered());
+        Assertions.assertTrue(response.getValidationErrors().isEmpty());
+    }
+
+    @Test
+    public void testDefaultValueNotUsedWhenVariableProvided() {
+        String yamlContent = """
+            templateId: default-override-test
+            template: "Greeting: {{greeting}}"
+            variables:
+              greeting:
+                type: string
+                default: Hello there
+            """;
+
+        ContentHandle content = ContentHandle.create(yamlContent);
+        Map<String, Object> variables = Map.of("greeting", "Hi");
+
+        RenderPromptResponse response = renderingService.render(content, variables,
+                "default", "default-override-test", "1.0");
+
+        Assertions.assertEquals("Greeting: Hi", response.getRendered());
+    }
+
+    @Test
+    public void testDefaultValueSatisfiesRequiredVariable() {
+        // A variable can be marked required and still declare a default; the default
+        // is used when the variable is omitted, and no "missing" error is raised.
+        String yamlContent = """
+            templateId: required-with-default
+            template: "Role: {{role}}"
+            variables:
+              role:
+                type: string
+                required: true
+                default: assistant
+            """;
+
+        ContentHandle content = ContentHandle.create(yamlContent);
+        Map<String, Object> variables = new HashMap<>();
+
+        RenderPromptResponse response = renderingService.render(content, variables,
+                "default", "required-with-default", "1.0");
+
+        Assertions.assertTrue(response.getValidationErrors().isEmpty());
+        Assertions.assertEquals("Role: assistant", response.getRendered());
+    }
+
+    @Test
+    public void testDefaultValueWithArrayType() {
+        String yamlContent = """
+            templateId: default-array-test
+            template: "Tags: {{tags}}"
+            variables:
+              tags:
+                type: array
+                default: ["general"]
+            """;
+
+        ContentHandle content = ContentHandle.create(yamlContent);
+        Map<String, Object> variables = new HashMap<>();
+
+        RenderPromptResponse response = renderingService.render(content, variables,
+                "default", "default-array-test", "1.0");
+
+        Assertions.assertTrue(response.getValidationErrors().isEmpty());
+        Assertions.assertEquals("Tags: [\"general\"]", response.getRendered());
+    }
+
+    @Test
+    public void testExplicitInvalidValueNotReplacedByDefault() {
+        // An explicitly-provided (but invalid) value must still be validated against the
+        // schema, not silently replaced by the variable's default.
+        String yamlContent = """
+            templateId: default-no-override-test
+            template: "Style: {{style}}"
+            variables:
+              style:
+                type: string
+                default: concise
+                enum:
+                  - concise
+                  - detailed
+            """;
+
+        ContentHandle content = ContentHandle.create(yamlContent);
+        Map<String, Object> variables = Map.of("style", "verbose"); // Not in enum
+
+        RenderPromptResponse response = renderingService.render(content, variables,
+                "default", "default-no-override-test", "1.0");
+
+        List<RenderValidationError> errors = response.getValidationErrors();
+        Assertions.assertEquals(1, errors.size());
+        Assertions.assertEquals("style", errors.get(0).getVariableName());
+        Assertions.assertEquals("Style: verbose", response.getRendered());
+    }
+
+    @Test
+    public void testNoDefaultLeavesPlaceholderUnchanged() {
+        // Unchanged legacy behavior: a variable with no declared default and not
+        // provided by the caller keeps the placeholder in the rendered output.
+        String yamlContent = """
+            templateId: no-default-test
+            template: "Style: {{style}}"
+            variables:
+              style:
+                type: string
+            """;
+
+        ContentHandle content = ContentHandle.create(yamlContent);
+        Map<String, Object> variables = new HashMap<>();
+
+        RenderPromptResponse response = renderingService.render(content, variables,
+                "default", "no-default-test", "1.0");
+
+        Assertions.assertEquals("Style: {{style}}", response.getRendered());
+        Assertions.assertTrue(response.getValidationErrors().isEmpty());
+    }
+
     // ===== Edge Cases =====
 
     @Test

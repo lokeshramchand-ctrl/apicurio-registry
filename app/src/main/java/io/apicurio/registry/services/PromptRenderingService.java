@@ -8,6 +8,7 @@ import io.apicurio.registry.storage.error.InvalidContentException;
 import jakarta.enterprise.context.ApplicationScoped;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -47,11 +48,14 @@ public class PromptRenderingService {
         String templateText = extractTemplateText(templateNode);
         JsonNode variablesSchema = templateNode.path("variables");
 
+        // Fall back to each variable's declared default for any variable the caller omitted
+        Map<String, Object> effectiveVariables = applyDefaults(variables, variablesSchema);
+
         // Validate variables against schema
-        List<RenderValidationError> validationErrors = validateVariables(variables, variablesSchema);
+        List<RenderValidationError> validationErrors = validateVariables(effectiveVariables, variablesSchema);
 
         // Render the template by substituting variables
-        String rendered = substituteVariables(templateText, variables);
+        String rendered = substituteVariables(templateText, effectiveVariables);
 
         return RenderPromptResponse.builder()
                 .rendered(rendered)
@@ -100,6 +104,32 @@ public class PromptRenderingService {
             throw new InvalidContentException("Prompt template 'template' field must not be blank");
         }
         return templateText;
+    }
+
+    /**
+     * Builds an effective variables map by filling in each declared variable's 'default'
+     * value for any variable the caller omitted entirely. A variable the caller explicitly
+     * provided (including an explicit null) is never overridden by its default.
+     */
+    private Map<String, Object> applyDefaults(Map<String, Object> variables, JsonNode variablesSchema) {
+        if (variablesSchema.isMissingNode() || !variablesSchema.isObject()) {
+            return variables;
+        }
+
+        Map<String, Object> effectiveVariables = new HashMap<>(variables);
+
+        Iterator<Map.Entry<String, JsonNode>> fields = variablesSchema.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> field = fields.next();
+            String varName = field.getKey();
+            JsonNode defaultNode = field.getValue().path("default");
+
+            if (!effectiveVariables.containsKey(varName) && !defaultNode.isMissingNode()) {
+                effectiveVariables.put(varName, MAPPER.convertValue(defaultNode, Object.class));
+            }
+        }
+
+        return effectiveVariables;
     }
 
     /**
